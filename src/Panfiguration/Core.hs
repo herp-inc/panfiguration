@@ -16,6 +16,7 @@ module Panfiguration.Core (
     , opts
     , defaults
     , fullDefaults
+    , logger
     , Panfigurable
     , exec
     , run
@@ -30,6 +31,7 @@ import Control.Monad (forM)
 import Data.Bifunctor
 import Data.Functor.Compose
 import Data.Functor.Identity
+import Data.Maybe (fromMaybe)
 import Data.Monoid (First(..))
 import qualified Options.Applicative as O
 import System.Environment (getEnvironment)
@@ -50,22 +52,23 @@ mapConsts :: FunctorB h => (a -> b) -> h (Const a) -> h (Const b)
 mapConsts f = bmap (first f)
 
 data Panfiguration h = Panfiguration
-    { fieldNameModifiers :: First Case
+    { fieldNameCase :: First Case
+    , loggerFunction :: First (String -> IO ())
     , sources :: [Source h]
     }
 
 instance Semigroup (Panfiguration h) where
-    Panfiguration p q <> Panfiguration r s = Panfiguration (p <> r) (q <> s)
+    Panfiguration a b c <> Panfiguration x y z = Panfiguration (a <> x) (b <> y) (c <> z)
 
 instance Monoid (Panfiguration h) where
-    mempty = Panfiguration mempty mempty
+    mempty = Panfiguration mempty mempty mempty
 
 mkSource :: Case -> (h (Const String) -> IO (h Result)) -> Panfiguration h
-mkSource c f = Panfiguration mempty [Source c f]
+mkSource c f = mempty { sources = [Source c f] }
 
 -- | Set the letter case of the data declaration
 declCase :: Case -> Panfiguration h
-declCase c = Panfiguration (pure c) []
+declCase c = mempty { fieldNameCase = pure c }
 
 -- | Set the letter case of the sources
 asCase :: Panfiguration h -> Case -> Panfiguration h
@@ -99,12 +102,15 @@ defaults def = mkSource AsIs $ const $ pure $ bmap (Result . fmap ("default",)) 
 fullDefaults :: (BareB b, FunctorB (b Covered)) => b Bare Identity  -> Panfiguration (b Covered)
 fullDefaults = defaults . bmap (Just . runIdentity) . bcover
 
+logger :: (String -> IO ()) -> Panfiguration h
+logger f = mempty { loggerFunction = pure f }
+
 resolve :: (String -> IO ()) -> Dict Show a -> Const String a -> Result a -> IO a
-resolve logger Dict (Const key) (Result r) = case r of
+resolve logFunc Dict (Const key) (Result r) = case r of
     Nothing -> fail $ "No default value is provided for " <> key
     Just (src, v) -> explain src v
   where
-    explain src v = v <$ logger (unwords [key <> ":", "using", show v, "from the", src])
+    explain src v = v <$ logFunc (unwords [key <> ":", "using", show v, "from the", src])
 
 type Panfigurable h = (FieldNamesB h
     , TraversableB h
@@ -119,7 +125,7 @@ exec :: (Panfigurable h)
     -> IO (h Result)
 exec Panfiguration{..} = do
     let names = mapConsts
-            (split $ maybe camel id $ getFirst fieldNameModifiers)
+            (split $ fromMaybe camel $ getFirst fieldNameCase)
             bfieldNames
 
     results <- forM sources $ \Source{..} -> sourceRun
@@ -128,9 +134,9 @@ exec Panfiguration{..} = do
     pure $ foldr (bzipWith (<>)) (bpure mempty) results
 
 run :: (BareB b, Panfigurable (b Covered))
-    => (String -> IO ()) -- ^ logger
-    -> Panfiguration (b Covered)
+    => Panfiguration (b Covered)
     -> IO (b Bare Identity)
-run logger panfig = do
+run panfig = do
     result <- exec panfig
-    fmap bstrip $ bsequence' $ bzipWith3 (resolve logger) bdicts bfieldNames result
+    let logFunc = fromMaybe mempty $ getFirst $ loggerFunction panfig
+    fmap bstrip $ bsequence' $ bzipWith3 (resolve logFunc) bdicts bfieldNames result

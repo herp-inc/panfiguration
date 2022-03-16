@@ -23,8 +23,9 @@ passthroughBareB [d|
     |]
 
 getServerArgs :: IO ServerArgs
-getServerArgs = run putStrLn $ mconcat
-    [ declCase snake
+getServerArgs = run $ mconcat
+    [ logger putStrLn
+    , declCase snake
     , envs `withNames` \names -> names
         { http_host = "HTTP_HOST"
         , http_port = "HTTP_PORT"

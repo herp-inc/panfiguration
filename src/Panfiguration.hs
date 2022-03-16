@@ -8,6 +8,7 @@ module Panfiguration (
     opts,
     defaults,
     fullDefaults,
+    logger,
     run,
     -- * Naming convention
     Case(..),
