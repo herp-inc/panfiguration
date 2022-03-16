@@ -1,7 +1,7 @@
 {-# LANGUAGE PatternSynonyms #-}
 module Panfiguration (
     Panfiguration,
-    decCase,
+    declCase,
     asCase,
     withNames,
     envs,

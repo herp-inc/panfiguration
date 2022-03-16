@@ -9,7 +9,7 @@ module Panfiguration.Core (
      Panfiguration(..)
     , Result(..)
     , Source(..)
-    , decCase
+    , declCase
     , asCase
     , withNames
     , envs
@@ -64,8 +64,8 @@ mkSource :: Case -> (h (Const String) -> IO (h Result)) -> Panfiguration h
 mkSource c f = Panfiguration mempty [Source c f]
 
 -- | Set the letter case of the data declaration
-decCase :: Case -> Panfiguration h
-decCase c = Panfiguration (pure c) []
+declCase :: Case -> Panfiguration h
+declCase c = Panfiguration (pure c) []
 
 -- | Set the letter case of the sources
 asCase :: Panfiguration h -> Case -> Panfiguration h

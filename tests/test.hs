@@ -21,7 +21,7 @@ deriving instance Show ServerArgs
 
 getServerArgs :: IO ServerArgs
 getServerArgs = run putStrLn $ mconcat
-    [ decCase snake
+    [ declCase snake
     , envs `withNames` \names -> names
         { http_host = "HTTP_HOST"
         , http_port = "HTTP_PORT"

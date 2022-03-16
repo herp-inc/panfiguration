@@ -24,7 +24,7 @@ passthroughBareB [d|
 
 getServerArgs :: IO ServerArgs
 getServerArgs = run putStrLn $ mconcat
-    [ decCase snake
+    [ declCase snake
     , envs `withNames` \names -> names
         { http_host = "HTTP_HOST"
         , http_port = "HTTP_PORT"
@@ -42,7 +42,7 @@ getServerArgs = run putStrLn $ mconcat
 Naming conventions
 ----
 
-`decCase` specifies the naming convention of the Haskell data declaration (the default is `camel`).
+`declCase` specifies the naming convention of the Haskell data declaration (the default is `camel`).
 The naming conventions are configurable by the `asCase` modifier.
 By default, `envs` and `opts` uses SNAKE_CASE and kebab-case respectively.
 
