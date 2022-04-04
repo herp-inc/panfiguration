@@ -1,6 +1,9 @@
 Usage
 ----
 
+[![Hackage](https://img.shields.io/hackage/v/panfiguration.svg)](https://hackage.haskell.org/package/panfiguration)
+![Haskell CI](https://github.com/herp-inc/panfiguration/workflows/Haskell%20CI/badge.svg)
+
 Panfiguration is a library that provides a composable, automatically-derived interface for configuration parameters.
 
 Currently three backends are supported; `envs` for environment variables, `opts` for command-line options and `defaults` for default values.

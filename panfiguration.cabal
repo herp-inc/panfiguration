@@ -6,20 +6,24 @@ version:            0.0
 synopsis:           Merge environment variables and command line options generically
 
 -- A longer description of the package.
--- description:
+description:        See README.md
 
 -- A URL where users can report bugs.
--- bug-reports:
+bug-reports:        https://github.com/herp-inc/panfiguration
 
 -- The license under which the package is released.
--- license:
+license:            Apache-2.0
 author:             Fumiaki Kinoshita
 maintainer:         fumiaki.kinoshita@herp.co.jp
 
 -- A copyright notice.
--- copyright:
+copyright:          Copyright (c) 2022 Fumiaki Kinoshita
 -- category:
 extra-source-files: CHANGELOG.md, README.md
+
+source-repository head
+  type: git
+  location: https://github.com/herp-inc/panfiguration.git
 
 library
     exposed-modules:
@@ -37,7 +41,7 @@ library
         , text
     hs-source-dirs:   src
     default-language: Haskell2010
-    ghc-options: -Wall
+    ghc-options: -Wall -Wcompat
 
 test-suite test
   type: exitcode-stdio-1.0
@@ -49,3 +53,4 @@ test-suite test
     , barbies-th
     , panfiguration
   default-language: Haskell2010
+  ghc-options: -Wall -Wcompat
