@@ -8,6 +8,7 @@ import Data.Char
 import Data.Typeable
 import Network.Socket (PortNumber)
 import Text.Read (readMaybe)
+import qualified Data.Text as Text
 
 -- | A newtype wrapper to distinguish confidential values.
 -- 'show' and error messages from 'fromParam' mask its contents.
@@ -52,6 +53,8 @@ instance FromParam a => FromParam [a] where
 instance FromParam Int
 instance FromParam Integer
 instance FromParam PortNumber
+instance FromParam Text.Text where
+    fromParam = pure . Text.pack
 
 instance FromParam ByteString where
     fromParam str
