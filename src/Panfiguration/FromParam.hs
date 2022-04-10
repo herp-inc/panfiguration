@@ -60,3 +60,6 @@ instance FromParam ByteString where
     fromParam str
         | all ((<128) . fromEnum) str = Right $ BC.pack str
         | otherwise = Left "expected ByteString, but found a non-ASCII character"
+
+instance FromParam a => FromParam (Maybe a) where
+    fromParam str = Just <$> fromParam str
