@@ -5,6 +5,7 @@ module Panfiguration.FromParam (Secret(..), FromParam(..), readFromParam) where
 
 import Data.ByteString.Char8 as BC (ByteString, pack)
 import Data.Char
+import Data.Monoid
 import Data.Typeable
 import Network.Socket (PortNumber)
 import Text.Read (readMaybe)
@@ -25,6 +26,10 @@ class FromParam a where
 
     fromParamList :: String -> Either String [a]
     fromParamList _ = Left "No implementation for fromParamList"
+
+    -- | Merge two parameters. The 'Ordering' indicates which side of the arguments is used.
+    mergeParams :: a -> a -> (Ordering, a)
+    mergeParams a _ = (LT, a)
 
 -- | A reasonable default implementation for 'fromParam' via 'Read'
 readFromParam :: forall a. (Typeable a, Read a) => String -> Either String a
@@ -63,3 +68,13 @@ instance FromParam ByteString where
 
 instance FromParam a => FromParam (Maybe a) where
     fromParam str = Just <$> fromParam str
+
+instance FromParam Any where
+    fromParam = fmap Any . fromParam
+    mergeParams (Any False) a = (GT, a)
+    mergeParams (Any True) _ = (LT, Any True)
+
+instance FromParam All where
+    fromParam = fmap All . fromParam
+    mergeParams (All False) _ = (LT, All False)
+    mergeParams (All True) a = (GT, a)

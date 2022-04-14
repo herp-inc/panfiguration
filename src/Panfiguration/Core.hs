@@ -20,6 +20,7 @@ module Panfiguration.Core (
     , Panfigurable
     , exec
     , run
+    , runMaybe
     ) where
 
 import Barbies
@@ -31,6 +32,7 @@ import Control.Monad (forM)
 import Data.Bifunctor
 import Data.Functor.Compose
 import Data.Functor.Identity
+import Data.List (intercalate)
 import Data.Maybe (fromMaybe)
 import Data.Monoid (First(..))
 import qualified Options.Applicative as O
@@ -39,9 +41,30 @@ import System.Environment (getEnvironment)
 import Panfiguration.FromParam
 import Panfiguration.Case
 
-newtype Result a = Result { unResult :: Maybe (String, a) }
+data Result a = Result
+    { resultSources :: [String]
+    , resultUsed :: [String]
+    , resultContent :: Maybe a
+    }
     deriving (Show, Eq, Ord)
-    deriving (Semigroup, Monoid) via Compose First ((,) String) a
+
+mkResult :: String -> Maybe a -> Result a
+mkResult key = Result [key] [key]
+
+instance FromParam a => Semigroup (Result a) where
+    Result s0 _ Nothing <> Result s1 _ Nothing = Result (s0 <> s1) mempty Nothing
+    Result s0 _ Nothing <> Result s1 u (Just a) = Result (s0 <> s1) u (Just a)
+    Result s0 u (Just a) <> Result s1 _ Nothing = Result (s0 <> s1) u (Just a)
+    Result s0 u0 (Just a) <> Result s1 u1 (Just b)
+        =   let (side, c) = mergeParams a b
+                used = case side of
+                    LT -> u0
+                    EQ -> u0 <> u1
+                    GT -> u1
+            in Result (s0 <> s1) used $ Just c
+
+instance FromParam a => Monoid (Result a) where
+    mempty = Result [] [] Nothing
 
 data Source h = Source
     { sourceCase :: Case
@@ -82,21 +105,23 @@ envs :: (TraversableB h, ConstraintsB h, AllB FromParam h) => Panfiguration h
 envs = mkSource SNAKE $ \envNames -> do
     vars <- getEnvironment
     either fail pure $ btraverseC @FromParam
-        (\(Const k) -> Result . fmap ("environment variable",)
-            <$> traverse (first ((k ++ ": ") ++) . fromParam) (lookup k vars))
+        (\(Const k) -> tag k <$> traverse fromParam (lookup k vars))
         envNames
+  where
+    tag k = mkResult $ "environment variable " <> k
 
 opts :: (TraversableB h, ConstraintsB h, AllB FromParam h) => Panfiguration h
 opts = mkSource kebab $ \optNames -> do
     let parsers = btraverseC @FromParam
-            (\(Const k) -> fmap (Result . fmap ("command line option",)) $ optional $ mkOption k)
+            (\(Const k) -> fmap (tag k) $ optional $ mkOption k)
             optNames
     O.execParser $ O.info (parsers <**> O.helper) mempty
   where
+    tag k = mkResult $ "command line option " <> k
     mkOption k = O.option (O.eitherReader fromParam) $ O.long k
 
 defaults :: FunctorB h => h Maybe -> Panfiguration h
-defaults def = mkSource AsIs $ const $ pure $ bmap (Result . fmap ("default",)) def
+defaults def = mkSource AsIs $ const $ pure $ bmap (mkResult "default") def
 
 -- | Provide all the default values by a plain record
 fullDefaults :: (BareB b, FunctorB (b Covered)) => b Bare Identity  -> Panfiguration (b Covered)
@@ -105,12 +130,10 @@ fullDefaults = defaults . bmap (Just . runIdentity) . bcover
 logger :: (String -> IO ()) -> Panfiguration h
 logger f = mempty { loggerFunction = pure f }
 
-resolve :: (String -> IO ()) -> Dict Show a -> Const String a -> Result a -> IO a
-resolve logFunc Dict (Const key) (Result r) = case r of
-    Nothing -> fail $ "No default value is provided for " <> key
-    Just (src, v) -> explain src v
-  where
-    explain src v = v <$ logFunc (unwords [key <> ":", "using", show v, "from the", src])
+resolve :: (String -> IO ()) -> Dict Show a -> Const String a -> Result a -> Compose IO Maybe a
+resolve logFunc Dict (Const key) (Result srcs used r) = Compose $ r <$ case r of
+    Nothing -> logFunc $ unwords [key <> ":", "None of", intercalate "," srcs, "provides a value"]
+    Just v -> logFunc $ unwords [key <> ":", "using", show v, "from", intercalate "," used]
 
 type Panfigurable h = (FieldNamesB h
     , TraversableB h
@@ -131,12 +154,19 @@ exec Panfiguration{..} = do
     results <- forM sources $ \Source{..} -> sourceRun
         $ mapConsts (join sourceCase) names
  
-    pure $ foldr (bzipWith (<>)) (bpure mempty) results
+    pure $ foldr (bzipWithC @FromParam (<>)) (bpureC @FromParam mempty) results
+
+runMaybe :: (Panfigurable h)
+    => Panfiguration h
+    -> IO (h Maybe)
+runMaybe panfig = do
+    result <- exec panfig
+    let logFunc = fromMaybe mempty $ getFirst $ loggerFunction panfig
+    bsequence $ bzipWith3 (resolve logFunc) bdicts bfieldNames result
 
 run :: (BareB b, Panfigurable (b Covered))
     => Panfiguration (b Covered)
     -> IO (b Bare Identity)
 run panfig = do
-    result <- exec panfig
-    let logFunc = fromMaybe mempty $ getFirst $ loggerFunction panfig
-    fmap bstrip $ bsequence' $ bzipWith3 (resolve logFunc) bdicts bfieldNames result
+    maybes <- runMaybe panfig
+    fmap bstrip <$> maybe (error "Failed to run panfiguration") pure $ bsequence' maybes
