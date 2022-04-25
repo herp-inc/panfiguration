@@ -4,36 +4,44 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE OverloadedStrings #-}
+module Main where
 import Barbies.TH
 import Panfiguration
 
 passthroughBareB [d|
+    data Listen = Listen
+        { host :: String
+        , port :: Int
+        }
+    |]
+
+instance Panfigurable Listen where
+    template = bareTemplate
+
+passthroughBareB [d|
     data ServerArgs = ServerArgs
-        { http_host :: String
-        , http_port :: Int
+        { http :: Listen
         , enable_service_log :: Bool
         , environment :: String
         }
     |]
 
+deriving instance Show Listen
 deriving instance Show ServerArgs
 
 getServerArgs :: IO ServerArgs
 getServerArgs = run $ mconcat
     [ logger putStrLn
     , declCase snake
-    , envs `withNames` \names -> names
-        { http_host = "HTTP_HOST"
-        , http_port = "HTTP_PORT"
-        }
     , opts `asCase` kebab
     , fullDefaults ServerArgs
-        { http_host = "0.0.0.0"
-        , http_port = 8080
+        { http = Listen "0.0.0.0" 8080
         , enable_service_log = True
         , environment = "dev"
         }
     ]
 
+main :: IO ()
 main = getServerArgs >>= print

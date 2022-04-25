@@ -1,7 +1,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE DefaultSignatures #-}
-module Panfiguration.FromParam (Secret(..), FromParam(..), readFromParam) where
+module Panfiguration.FromParam (Secret(..), FromParam(..), ParseError, readFromParam) where
 
 import Data.ByteString.Char8 as BC (ByteString, pack)
 import Data.Char
@@ -18,21 +18,19 @@ newtype Secret a = Secret { unSecret :: a }
 instance Show a => Show (Secret a) where
     show = ('*' <$) . show . unSecret
 
+type ParseError = String
+
 class FromParam a where
     -- | Parse a parameter
-    fromParam :: String -> Either String a
-    default fromParam :: (Typeable a, Read a) => String -> Either String a
+    fromParam :: String -> Either ParseError a
+    default fromParam :: (Typeable a, Read a) => String -> Either ParseError a
     fromParam = readFromParam
 
-    fromParamList :: String -> Either String [a]
+    fromParamList :: String -> Either ParseError [a]
     fromParamList _ = Left "No implementation for fromParamList"
 
-    -- | Merge two parameters. The 'Ordering' indicates which side of the arguments is used.
-    mergeParams :: a -> a -> (Ordering, a)
-    mergeParams a _ = (LT, a)
-
 -- | A reasonable default implementation for 'fromParam' via 'Read'
-readFromParam :: forall a. (Typeable a, Read a) => String -> Either String a
+readFromParam :: forall a. (Typeable a, Read a) => String -> Either ParseError a
 readFromParam str = maybe (Left err) Right $ readMaybe str
     where
         err = unwords ["failed to parse", str, "as", show (typeRep (Proxy :: Proxy a))]
@@ -71,10 +69,10 @@ instance FromParam a => FromParam (Maybe a) where
 
 instance FromParam Any where
     fromParam = fmap Any . fromParam
-    mergeParams (Any False) a = (GT, a)
-    mergeParams (Any True) _ = (LT, Any True)
+    -- mergeParams (Any False) a = (GT, a)
+    -- mergeParams (Any True) _ = (LT, Any True)
 
 instance FromParam All where
     fromParam = fmap All . fromParam
-    mergeParams (All False) _ = (LT, All False)
-    mergeParams (All True) a = (GT, a)
+    -- mergeParams (All False) _ = (LT, All False)
+    -- mergeParams (All True) a = (GT, a)

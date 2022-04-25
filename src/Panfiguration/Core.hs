@@ -1,10 +1,17 @@
+{-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE ConstraintKinds #-}
+{-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE ViewPatterns #-}
 module Panfiguration.Core (
      Panfiguration(..)
     , Result(..)
@@ -17,7 +24,10 @@ module Panfiguration.Core (
     , defaults
     , fullDefaults
     , logger
-    , Panfigurable
+    , Template(..)
+    , plainTemplate
+    , bareTemplate
+    , Panfigurable(..)
     , exec
     , run
     , runMaybe
@@ -25,16 +35,18 @@ module Panfiguration.Core (
 
 import Barbies
 import Barbies.Bare
-import Barbies.Constraints (Dict(..))
+import Barbies.Constraints (Dict(..), ClassF)
 import Barbies.TH
 import Control.Applicative
 import Control.Monad (forM)
-import Data.Bifunctor
+import Data.ByteString (ByteString)
 import Data.Functor.Compose
 import Data.Functor.Identity
-import Data.List (intercalate)
+import Data.List (intercalate, union)
 import Data.Maybe (fromMaybe)
-import Data.Monoid (First(..))
+import Data.Monoid (First(..), All, Any)
+import Data.String
+import qualified Data.Text as Text
 import qualified Options.Applicative as O
 import System.Environment (getEnvironment)
 
@@ -46,12 +58,17 @@ data Result a = Result
     , resultUsed :: [String]
     , resultContent :: Maybe a
     }
-    deriving (Show, Eq, Ord)
+    deriving (Show, Eq, Ord, Functor)
 
 mkResult :: String -> Maybe a -> Result a
 mkResult key = Result [key] [key]
 
-instance FromParam a => Semigroup (Result a) where
+-- | TODO: remove this
+instance Applicative Result where
+    pure a = Result [] [] (Just a)
+    Result s0 u0 f <*> Result s1 u1 a = Result (s0 `union` s1) (u0 `union` u1) (f <*> a)
+
+instance Panfigurable a => Semigroup (Result a) where
     Result s0 _ Nothing <> Result s1 _ Nothing = Result (s0 <> s1) mempty Nothing
     Result s0 _ Nothing <> Result s1 u (Just a) = Result (s0 <> s1) u (Just a)
     Result s0 u (Just a) <> Result s1 _ Nothing = Result (s0 <> s1) u (Just a)
@@ -63,16 +80,92 @@ instance FromParam a => Semigroup (Result a) where
                     GT -> u1
             in Result (s0 <> s1) used $ Just c
 
-instance FromParam a => Monoid (Result a) where
+instance Panfigurable a => Monoid (Result a) where
     mempty = Result [] [] Nothing
+
+class Panfigurable a where
+    declaredCase :: Case
+    declaredCase = camel
+
+    template :: [String] -> Template a
+
+    -- | Merge two parameters. The 'Ordering' indicates which side of the arguments is used.
+    mergeParams :: a -> a -> (Ordering, a)
+    mergeParams a _ = (LT, a)
+
+plainTemplate :: FromParam a => [String] -> Template a
+plainTemplate ts = Plain ts fromParam
+
+deriving instance Panfigurable a => Panfigurable (Identity a)
+
+instance Panfigurable Bool where
+    template = plainTemplate
+
+instance Panfigurable Char where
+    template = plainTemplate
+
+instance FromParam a => Panfigurable [a] where
+    template = plainTemplate
+
+instance Panfigurable Int where
+    template = plainTemplate
+
+instance Panfigurable Integer where
+    template = plainTemplate
+
+instance Panfigurable Text.Text where
+    template = plainTemplate
+
+instance Panfigurable ByteString where
+    template = plainTemplate
+
+instance FromParam a => Panfigurable (Maybe a) where
+    template = plainTemplate
+
+instance Panfigurable Any where
+    template = plainTemplate
+
+instance Panfigurable All where
+    template = plainTemplate
+
+instance (FieldNamesB h, TraversableB h, ConstraintsB h, AllBF Panfigurable f h) => Panfigurable (Barbie h f) where
+    template prefix = Barbie
+        <$> btraverseC @(ClassF Panfigurable f)
+            (\(Const name) -> template $ prefix <> split (declaredCase @(Barbie h f)) name)
+            bfieldNames
+
+data Template a where
+    Plain :: [String] -> (String -> Either ParseError a) -> Template a
+    Pure :: a -> Template a
+    Ap :: Template (a -> b) -> Template a -> Template b
+
+instance Functor Template where
+    fmap = Ap . Pure
+
+instance Applicative Template where
+    pure = Pure
+    (<*>) = Ap
+
+instance FromParam a => IsString (Template a) where
+    fromString str = Plain [str] fromParam
+
+toEnvParser :: Case -> [(String, String)] -> Template a -> Either String (Result a)
+toEnvParser srcCase vars (Plain (join srcCase -> k) parse)
+    = mkResult ("environment variable " <> k)
+    <$> traverse parse (lookup k vars)
+toEnvParser srcCase vars (Ap f g) = (<*>) <$> toEnvParser srcCase vars f <*> toEnvParser srcCase vars g
+toEnvParser _ _ (Pure a) = pure (pure a)
+
+toOptParser :: Case -> Template a -> O.Parser (Result a)
+toOptParser srcCase (Plain (join srcCase -> k) parse) = fmap (mkResult $ "command line option " <> k)
+    $ optional $ O.option (O.eitherReader parse) $ O.long k
+toOptParser srcCase (Ap f g) = (<*>) <$> toOptParser srcCase f <*> toOptParser srcCase g
+toOptParser _ (Pure a) = pure (pure a)
 
 data Source h = Source
     { sourceCase :: Case
-    , sourceRun :: h (Const String) -> IO (h Result)
+    , sourceRun :: Case -> h Template -> IO (h Result)
     }
-
-mapConsts :: FunctorB h => (a -> b) -> h (Const a) -> h (Const b)
-mapConsts f = bmap (first f)
 
 data Panfiguration h = Panfiguration
     { fieldNameCase :: First Case
@@ -86,7 +179,7 @@ instance Semigroup (Panfiguration h) where
 instance Monoid (Panfiguration h) where
     mempty = Panfiguration mempty mempty mempty
 
-mkSource :: Case -> (h (Const String) -> IO (h Result)) -> Panfiguration h
+mkSource :: Case -> (Case -> h Template -> IO (h Result)) -> Panfiguration h
 mkSource c f = mempty { sources = [Source c f] }
 
 -- | Set the letter case of the data declaration
@@ -98,33 +191,24 @@ asCase :: Panfiguration h -> Case -> Panfiguration h
 asCase pfg c = pfg { sources = [ s { sourceCase = c } | s <- sources pfg] }
 
 -- | Update names being used for the backends
-withNames :: Panfiguration h -> (h (Const String) -> h (Const String)) -> Panfiguration h
-withNames pfg f = pfg { sources = [ s { sourceRun = sourceRun s . f } | s <- sources pfg] }
+withNames :: Panfiguration h -> (h Template -> h Template) -> Panfiguration h
+withNames pfg f = pfg { sources = [ s { sourceRun = \c -> sourceRun s c . f } | s <- sources pfg] }
 
-envs :: (TraversableB h, ConstraintsB h, AllB FromParam h) => Panfiguration h
-envs = mkSource SNAKE $ \envNames -> do
+envs :: (TraversableB h, ConstraintsB h, AllB Panfigurable h) => Panfiguration h
+envs = mkSource SNAKE $ \srcCase envNames -> do
     vars <- getEnvironment
-    either fail pure $ btraverseC @FromParam
-        (\(Const k) -> tag k <$> traverse fromParam (lookup k vars))
-        envNames
-  where
-    tag k = mkResult $ "environment variable " <> k
+    either fail pure $ btraverseC @Panfigurable (toEnvParser srcCase vars) envNames
 
-opts :: (TraversableB h, ConstraintsB h, AllB FromParam h) => Panfiguration h
-opts = mkSource kebab $ \optNames -> do
-    let parsers = btraverseC @FromParam
-            (\(Const k) -> fmap (tag k) $ optional $ mkOption k)
-            optNames
+opts :: (TraversableB h, ConstraintsB h, AllB Panfigurable h) => Panfiguration h
+opts = mkSource kebab $ \srcCase optNames -> do
+    let parsers = btraverseC @Panfigurable (toOptParser srcCase) optNames
     O.execParser $ O.info (parsers <**> O.helper) mempty
-  where
-    tag k = mkResult $ "command line option " <> k
-    mkOption k = O.option (O.eitherReader fromParam) $ O.long k
 
 defaults :: FunctorB h => h Maybe -> Panfiguration h
-defaults def = mkSource AsIs $ const $ pure $ bmap (mkResult "default") def
+defaults def = mkSource AsIs $ \_ _ -> pure $ bmap (mkResult "default") def
 
 -- | Provide all the default values by a plain record
-fullDefaults :: (BareB b, FunctorB (b Covered)) => b Bare Identity  -> Panfiguration (b Covered)
+fullDefaults :: (BareB b, FunctorB (b Covered)) => b Bare Identity -> Panfiguration (b Covered)
 fullDefaults = defaults . bmap (Just . runIdentity) . bcover
 
 logger :: (String -> IO ()) -> Panfiguration h
@@ -135,28 +219,33 @@ resolve logFunc Dict (Const key) (Result srcs used r) = Compose $ r <$ case r of
     Nothing -> logFunc $ unwords [key <> ":", "None of", intercalate "," srcs, "provides a value"]
     Just v -> logFunc $ unwords [key <> ":", "using", show v, "from", intercalate "," used]
 
-type Panfigurable h = (FieldNamesB h
+type PanfigurableB h = (FieldNamesB h
     , TraversableB h
     , ApplicativeB h
     , ConstraintsB h
     , AllB Show h
-    , AllB FromParam h)
+    , AllB Panfigurable h)
+
+templates :: PanfigurableB h => Panfiguration h -> h Template
+templates Panfiguration{..} = bmapC @Panfigurable
+    (template . splitter . getConst)
+    bfieldNames
+    where
+        splitter = split $ fromMaybe camel $ getFirst fieldNameCase
+
+exec :: PanfigurableB h => Panfiguration h -> IO (h Result)
+exec = execWith <*> templates
 
 -- | Parse all the relevant environment variables and command line options, then merges them.
-exec :: (Panfigurable h)
+execWith :: (PanfigurableB h)
     => Panfiguration h
+    -> h Template
     -> IO (h Result)
-exec Panfiguration{..} = do
-    let names = mapConsts
-            (split $ fromMaybe camel $ getFirst fieldNameCase)
-            bfieldNames
+execWith Panfiguration{..} ts = do
+    results <- forM sources $ \Source{..} -> sourceRun sourceCase ts
+    pure $ foldr (bzipWithC @Panfigurable (<>)) (bpureC @Panfigurable mempty) results
 
-    results <- forM sources $ \Source{..} -> sourceRun
-        $ mapConsts (join sourceCase) names
- 
-    pure $ foldr (bzipWithC @FromParam (<>)) (bpureC @FromParam mempty) results
-
-runMaybe :: (Panfigurable h)
+runMaybe :: (PanfigurableB h)
     => Panfiguration h
     -> IO (h Maybe)
 runMaybe panfig = do
@@ -164,9 +253,12 @@ runMaybe panfig = do
     let logFunc = fromMaybe mempty $ getFirst $ loggerFunction panfig
     bsequence $ bzipWith3 (resolve logFunc) bdicts bfieldNames result
 
-run :: (BareB b, Panfigurable (b Covered))
+run :: (BareB b, PanfigurableB (b Covered))
     => Panfiguration (b Covered)
     -> IO (b Bare Identity)
 run panfig = do
     maybes <- runMaybe panfig
     fmap bstrip <$> maybe (error "Failed to run panfiguration") pure $ bsequence' maybes
+
+bareTemplate :: (BareB b, PanfigurableB (b Covered), AllB (ClassF Panfigurable Identity) (b Covered)) => [String] -> Template (b Bare Identity)
+bareTemplate prefix = bstrip . getBarbie <$> template prefix

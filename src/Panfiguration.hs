@@ -10,6 +10,9 @@ module Panfiguration (
     fullDefaults,
     logger,
     run,
+    -- * Nested panfiguration
+    Panfigurable(..),
+    bareTemplate,
     -- * Naming convention
     Case(..),
     camel,
