@@ -17,6 +17,7 @@ passthroughBareB [d|
         { http :: Bind
         , enable_service_log :: Bool
         , environment :: String
+        , extensions :: Collect String
         }
     |]
 
@@ -28,10 +29,12 @@ getServerArgs = run $ mconcat
     [ logger putStrLn
     , declCase snake
     , opts `asCase` kebab
-    , fullDefaults ServerArgs
-        { http = Bind "0.0.0.0" 8080
-        , enable_service_log = True
-        , environment = "dev"
+    , envs
+    , defaults ServerArgs
+        { http = Bind (Just "0.0.0.0") (Just 8080)
+        , enable_service_log = Just True
+        , environment = Nothing
+        , extensions = Just $ Collect []
         }
     ]
 

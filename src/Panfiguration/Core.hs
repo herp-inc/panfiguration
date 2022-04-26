@@ -109,7 +109,7 @@ envs = mkSource SNAKE $ \envNames -> do
         (\(Const k) -> tag k <$> traverse fromParam (lookup k vars))
         envNames
   where
-    tag k = mkResult $ "environment variable " <> k
+    tag k = mkResult $ "env:" <> k
 
 opts :: (TraversableB h, ConstraintsB h, AllB FromParam h) => Panfiguration h
 opts = mkSource kebab $ \optNames -> do
@@ -118,11 +118,11 @@ opts = mkSource kebab $ \optNames -> do
             optNames
     O.execParser $ O.info (parsers <**> O.helper) mempty
   where
-    tag k = mkResult $ "command line option " <> k
+    tag k = mkResult $ "--" <> k
     mkOption k = O.option (O.eitherReader fromParam) $ O.long k
 
 defaults :: FunctorB h => h Maybe -> Panfiguration h
-defaults def = mkSource AsIs $ const $ pure $ bmap (mkResult "default") def
+defaults def = mkSource AsIs $ const $ pure $ bmap (mkResult "the default") def
 
 -- | Provide all the default values by a plain record
 fullDefaults :: (BareB b, FunctorB (b Covered)) => b Bare Identity  -> Panfiguration (b Covered)
@@ -133,10 +133,15 @@ logger f = mempty { loggerFunction = pure f }
 
 resolve :: (String -> IO ()) -> Dict Show a -> Const (NE.NonEmpty String) a -> Result a -> Compose IO Maybe a
 resolve logFunc Dict (Const key) (Result srcs used r) = Compose $ r <$ case r of
-    Nothing -> logFunc $ unwords [displayKey key <> ":", "None of", intercalate "," srcs, "provides a value"]
-    Just v -> logFunc $ unwords [displayKey key <> ":", "using", show v, "from", intercalate "," used]
+    Nothing -> logFunc $ unwords [displayKey key <> ":", "None of", commas srcs, "provides a value"]
+    Just v -> logFunc $ unwords [displayKey key <> ":", "using", show v, "from", commas used]
     where
         displayKey = intercalate "." . NE.toList
+        commas [] = ""
+        commas [a] = a
+        commas [a, b] = unwords [a, "and", b]
+        commas (x : xs) = x <> ", " <> commas xs
+
 
 type Panfigurable h = (FieldNamesB h
     , TraversableB h
