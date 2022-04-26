@@ -3,7 +3,13 @@
 {-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE GeneralisedNewtypeDeriving #-}
-module Panfiguration.FromParam (Secret(..), FromParam(..), readFromParam) where
+module Panfiguration.FromParam (
+    FromParam(..)
+    , readFromParam
+    -- * Wrappers
+    , Secret(..)
+    , Collect(..)
+    ) where
 
 import Control.Applicative
 import Data.ByteString.Char8 as BC (ByteString, pack)
@@ -90,3 +96,12 @@ instance FromParam All where
     fromParam = fmap All . fromParam
     mergeParams (All False) _ = (LT, All False)
     mergeParams (All True) a = (GT, a)
+
+-- | Collect all the specified parameters instead of overriding
+newtype Collect a = Collect { unCollect :: [a] }
+
+instance FromParam a => FromParam (Collect a) where
+    fromParam = fmap (Collect . pure) . fromParam
+    mergeParams a (Collect []) = (LT, a)
+    mergeParams (Collect []) b = (GT, b)
+    mergeParams (Collect a) (Collect b) = (EQ, Collect $ a <> b)

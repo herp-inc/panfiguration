@@ -19,7 +19,8 @@ module Panfiguration (
     kebab,
     -- * Parameter
     FromParam,
-    Secret(..)
+    Secret(..),
+    Collect(..),
     ) where
 
 import Panfiguration.Core
