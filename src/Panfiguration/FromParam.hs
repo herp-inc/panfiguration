@@ -1,13 +1,18 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE DefaultSignatures #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE GeneralisedNewtypeDeriving #-}
 module Panfiguration.FromParam (Secret(..), FromParam(..), readFromParam) where
 
+import Control.Applicative
 import Data.ByteString.Char8 as BC (ByteString, pack)
 import Data.Char
+import Data.Functor.Identity
 import Data.Monoid
 import Data.Typeable
 import Network.Socket (PortNumber)
+import Numeric.Natural
 import Text.Read (readMaybe)
 import qualified Data.Text as Text
 
@@ -55,8 +60,15 @@ instance FromParam Char where
 instance FromParam a => FromParam [a] where
     fromParam = fromParamList
 
+instance FromParam () where
+    fromParam _ = Right ()
+deriving instance FromParam a => FromParam (Identity a)
+deriving instance FromParam a => FromParam (Const a b)
 instance FromParam Int
+instance FromParam Float
+instance FromParam Double
 instance FromParam Integer
+instance FromParam Natural
 instance FromParam PortNumber
 instance FromParam Text.Text where
     fromParam = pure . Text.pack
