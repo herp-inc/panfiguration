@@ -24,7 +24,7 @@ import qualified Data.Text as Text
 
 -- | A newtype wrapper to distinguish confidential values.
 -- 'show' and error messages from 'fromParam' mask its contents.
-newtype Secret a = Secret { unSecret :: a }
+newtype Secret a = Secret { unSecret :: a } deriving (Eq, Ord)
 
 instance Show a => Show (Secret a) where
     show = ('*' <$) . show . unSecret
@@ -98,7 +98,7 @@ instance FromParam All where
     mergeParams (All True) a = (GT, a)
 
 -- | Collect all the specified parameters instead of overriding
-newtype Collect a = Collect { unCollect :: [a] }
+newtype Collect a = Collect { unCollect :: [a] } deriving (Eq, Ord, Show, Semigroup, Monoid)
 
 instance FromParam a => FromParam (Collect a) where
     fromParam = fmap (Collect . pure) . fromParam
