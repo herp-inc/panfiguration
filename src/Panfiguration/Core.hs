@@ -33,6 +33,7 @@ import Data.Bifunctor
 import Data.Functor.Compose
 import Data.Functor.Identity
 import Data.List (intercalate)
+import qualified Data.List.NonEmpty as NE
 import Data.Maybe (fromMaybe)
 import Data.Monoid (First(..))
 import qualified Options.Applicative as O
@@ -130,10 +131,12 @@ fullDefaults = defaults . bmap (Just . runIdentity) . bcover
 logger :: (String -> IO ()) -> Panfiguration h
 logger f = mempty { loggerFunction = pure f }
 
-resolve :: (String -> IO ()) -> Dict Show a -> Const String a -> Result a -> Compose IO Maybe a
+resolve :: (String -> IO ()) -> Dict Show a -> Const (NE.NonEmpty String) a -> Result a -> Compose IO Maybe a
 resolve logFunc Dict (Const key) (Result srcs used r) = Compose $ r <$ case r of
-    Nothing -> logFunc $ unwords [key <> ":", "None of", intercalate "," srcs, "provides a value"]
-    Just v -> logFunc $ unwords [key <> ":", "using", show v, "from", intercalate "," used]
+    Nothing -> logFunc $ unwords [displayKey key <> ":", "None of", intercalate "," srcs, "provides a value"]
+    Just v -> logFunc $ unwords [displayKey key <> ":", "using", show v, "from", intercalate "," used]
+    where
+        displayKey = intercalate "." . NE.toList
 
 type Panfigurable h = (FieldNamesB h
     , TraversableB h
@@ -148,11 +151,11 @@ exec :: (Panfigurable h)
     -> IO (h Result)
 exec Panfiguration{..} = do
     let names = mapConsts
-            (split $ fromMaybe camel $ getFirst fieldNameCase)
-            bfieldNames
+            (fmap $ split $ fromMaybe camel $ getFirst fieldNameCase)
+            bnestedFieldNames
 
     results <- forM sources $ \Source{..} -> sourceRun
-        $ mapConsts (join sourceCase) names
+        $ mapConsts (join sourceCase . concat) names
  
     pure $ foldr (bzipWithC @FromParam (<>)) (bpureC @FromParam mempty) results
 
@@ -162,7 +165,7 @@ runMaybe :: (Panfigurable h)
 runMaybe panfig = do
     result <- exec panfig
     let logFunc = fromMaybe mempty $ getFirst $ loggerFunction panfig
-    bsequence $ bzipWith3 (resolve logFunc) bdicts bfieldNames result
+    bsequence $ bzipWith3 (resolve logFunc) bdicts bnestedFieldNames result
 
 run :: (BareB b, Panfigurable (b Covered))
     => Panfiguration (b Covered)

@@ -3,37 +3,40 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE OverloadedStrings #-}
 import Barbies.TH
+import Data.Proxy
 import Panfiguration
 
 passthroughBareB [d|
+    data Bind = Bind { host :: String, port :: Int }
     data ServerArgs = ServerArgs
-        { http_host :: String
-        , http_port :: Int
+        { http :: Bind
         , enable_service_log :: Bool
         , environment :: String
         }
     |]
 
+deriving instance Show Bind
 deriving instance Show ServerArgs
 
 getServerArgs :: IO ServerArgs
 getServerArgs = run $ mconcat
     [ logger putStrLn
     , declCase snake
-    , envs `withNames` \names -> names
-        { http_host = "HTTP_HOST"
-        , http_port = "HTTP_PORT"
-        }
     , opts `asCase` kebab
     , fullDefaults ServerArgs
-        { http_host = "0.0.0.0"
-        , http_port = 8080
+        { http = Bind "0.0.0.0" 8080
         , enable_service_log = True
         , environment = "dev"
         }
     ]
 
+main :: IO ()
 main = getServerArgs >>= print
+
+_unused :: ()
+_unused = Proxy @BindH `seq` Proxy @ServerArgsH `seq` ()

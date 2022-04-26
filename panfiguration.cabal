@@ -33,7 +33,7 @@ library
         Panfiguration.Core
     build-depends:    base >=4.10 && <5
         , barbies
-        , barbies-th
+        , barbies-th ^>= 0.1.10
         , bytestring
         , network
         , optparse-applicative
