@@ -21,6 +21,8 @@ import Network.Socket (PortNumber)
 import Numeric.Natural
 import Text.Read (readMaybe)
 import qualified Data.Text as Text
+import Data.Time.Clock (NominalDiffTime, secondsToNominalDiffTime)
+import Data.Word (Word16)
 
 -- | A newtype wrapper to distinguish confidential values.
 -- 'show' and error messages from 'fromParam' mask its contents.
@@ -76,6 +78,13 @@ instance FromParam Double
 instance FromParam Integer
 instance FromParam Natural
 instance FromParam PortNumber
+instance FromParam Word16
+
+instance FromParam NominalDiffTime where
+  fromParam str = case readMaybe str of
+    Just x -> Right $ secondsToNominalDiffTime x
+    Nothing -> Left $ unwords ["failed to parse", str, "as", "NominalDiffTime"]
+
 instance FromParam Text.Text where
     fromParam = pure . Text.pack
 
