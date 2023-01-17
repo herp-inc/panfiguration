@@ -15,6 +15,7 @@ import Control.Applicative
 import Data.ByteString.Char8 as BC (ByteString, pack)
 import Data.Char
 import Data.Functor.Identity
+import Data.List.Split (splitOn)
 import Data.Monoid
 import Data.Typeable
 import Network.Socket (PortNumber)
@@ -38,7 +39,7 @@ class FromParam a where
     fromParam = readFromParam
 
     fromParamList :: String -> Either String [a]
-    fromParamList _ = Left "No implementation for fromParamList"
+    fromParamList str = traverse fromParam (splitOn "," str)
 
     -- | Merge two parameters. The 'Ordering' indicates which side of the arguments is used.
     mergeParams :: a -> a -> (Ordering, a)
