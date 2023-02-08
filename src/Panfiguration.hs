@@ -9,6 +9,7 @@ module Panfiguration (
     defaults,
     fullDefaults,
     logger,
+    errorLogger,
     run,
     -- * Naming convention
     Case(..),

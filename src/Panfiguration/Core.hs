@@ -17,6 +17,7 @@ module Panfiguration.Core (
     , defaults
     , fullDefaults
     , logger
+    , errorLogger
     , Panfigurable
     , exec
     , run
@@ -78,14 +79,15 @@ mapConsts f = bmap (first f)
 data Panfiguration h = Panfiguration
     { fieldNameCase :: First Case
     , loggerFunction :: First (String -> IO ())
+    , errorLoggerFunction :: First (String -> IO ())
     , sources :: [Source h]
     }
 
 instance Semigroup (Panfiguration h) where
-    Panfiguration a b c <> Panfiguration x y z = Panfiguration (a <> x) (b <> y) (c <> z)
+    Panfiguration a b c d <> Panfiguration x y z w = Panfiguration (a <> x) (b <> y) (c <> z) (d<>w)
 
 instance Monoid (Panfiguration h) where
-    mempty = Panfiguration mempty mempty mempty
+    mempty = Panfiguration mempty mempty mempty mempty
 
 mkSource :: Case -> (h (Const String) -> IO (h Result)) -> Panfiguration h
 mkSource c f = mempty { sources = [Source c f] }
@@ -131,9 +133,12 @@ fullDefaults = defaults . bmap (Just . runIdentity) . bcover
 logger :: (String -> IO ()) -> Panfiguration h
 logger f = mempty { loggerFunction = pure f }
 
-resolve :: (String -> IO ()) -> Dict Show a -> Const (NE.NonEmpty String) a -> Result a -> Compose IO Maybe a
-resolve logFunc Dict (Const key) (Result srcs used r) = Compose $ r <$ case r of
-    Nothing -> logFunc $ unwords [displayKey key <> ":", "None of", commas srcs, "provides a value"]
+errorLogger :: (String -> IO ()) -> Panfiguration h
+errorLogger f = mempty { errorLoggerFunction = pure f }
+
+resolve :: (String -> IO ()) -> Maybe (String -> IO ()) -> Dict Show a -> Const (NE.NonEmpty String) a -> Result a -> Compose IO Maybe a
+resolve logFunc errorLog Dict (Const key) (Result srcs used r) = Compose $ r <$ case r of
+    Nothing -> fromMaybe logFunc errorLog $ unwords [displayKey key <> ":", "None of", commas srcs, "provides a value"]
     Just v -> logFunc $ unwords [displayKey key <> ":", "using", show v, "from", commas used]
     where
         displayKey = intercalate "." . NE.toList
@@ -170,7 +175,8 @@ runMaybe :: (Panfigurable h)
 runMaybe panfig = do
     result <- exec panfig
     let logFunc = fromMaybe mempty $ getFirst $ loggerFunction panfig
-    bsequence $ bzipWith3 (resolve logFunc) bdicts bnestedFieldNames result
+        errorLogFunc = getFirst $ errorLoggerFunction panfig
+    bsequence $ bzipWith3 (resolve logFunc errorLogFunc) bdicts bnestedFieldNames result
 
 run :: (BareB b, Panfigurable (b Covered))
     => Panfiguration (b Covered)
