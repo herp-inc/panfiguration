@@ -29,6 +29,7 @@ import Barbies.Bare
 import Barbies.Constraints (Dict(..))
 import Barbies.TH
 import Control.Applicative
+import Control.Exception
 import Control.Monad (forM)
 import Data.Bifunctor
 import Data.Functor.Compose
@@ -190,4 +191,7 @@ run :: (BareB b, Panfigurable (b Covered))
     -> IO (b Bare Identity)
 run panfig = do
     maybes <- runMaybe panfig
-    fmap bstrip <$> maybe (error "Failed to run panfiguration") pure $ bsequence' maybes
+    fmap bstrip <$> maybe (throwIO PanfigurationException) pure $ bsequence' maybes
+
+data PanfigurationException = PanfigurationException deriving Show
+instance Exception PanfigurationException
