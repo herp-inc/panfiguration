@@ -43,30 +43,34 @@ import System.Environment (getEnvironment)
 import Panfiguration.FromParam
 import Panfiguration.Case
 
+data Status a = Missing | Invalid String | Present a deriving (Show, Eq, Ord)
+
 data Result a = Result
     { resultSources :: [String]
     , resultUsed :: [String]
-    , resultContent :: Maybe a
+    , resultContent :: Status a
     }
     deriving (Show, Eq, Ord)
 
-mkResult :: String -> Maybe a -> Result a
+mkResult :: String -> Status a -> Result a
 mkResult key = Result [key] [key]
 
 instance FromParam a => Semigroup (Result a) where
-    Result s0 _ Nothing <> Result s1 _ Nothing = Result (s0 <> s1) mempty Nothing
-    Result s0 _ Nothing <> Result s1 u (Just a) = Result (s0 <> s1) u (Just a)
-    Result s0 u (Just a) <> Result s1 _ Nothing = Result (s0 <> s1) u (Just a)
-    Result s0 u0 (Just a) <> Result s1 u1 (Just b)
+    Result s0 u0 (Invalid msg) <> Result s1 _ _ = Result (s0 <> s1) u0 (Invalid msg)
+    Result s0 _ _ <> Result s1 u1 (Invalid msg) = Result (s0 <> s1) u1 (Invalid msg)
+    Result s0 _ Missing <> Result s1 _ Missing = Result (s0 <> s1) mempty Missing
+    Result s0 _ Missing <> Result s1 u (Present a) = Result (s0 <> s1) u (Present a)
+    Result s0 u (Present a) <> Result s1 _ Missing = Result (s0 <> s1) u (Present a)
+    Result s0 u0 (Present a) <> Result s1 u1 (Present b)
         =   let (side, c) = mergeParams a b
                 used = case side of
                     LT -> u0
                     EQ -> u0 <> u1
                     GT -> u1
-            in Result (s0 <> s1) used $ Just c
+            in Result (s0 <> s1) used $ Present c
 
 instance FromParam a => Monoid (Result a) where
-    mempty = Result [] [] Nothing
+    mempty = Result [] [] Missing
 
 data Source h = Source
     { sourceCase :: Case
@@ -107,8 +111,10 @@ withNames pfg f = pfg { sources = [ s { sourceRun = sourceRun s . f } | s <- sou
 envs :: (TraversableB h, ConstraintsB h, AllB FromParam h) => Panfiguration h
 envs = mkSource SNAKE $ \envNames -> do
     vars <- getEnvironment
-    either fail pure $ btraverseC @FromParam
-        (\(Const k) -> tag k <$> traverse fromParam (lookup k vars))
+    pure $ bmapC @FromParam
+        (\(Const k) -> tag k $ case lookup k vars of
+            Nothing -> Missing
+            Just v -> either Invalid Present $ fromParam v)
         envNames
   where
     tag k = mkResult $ "env:" <> k
@@ -116,7 +122,7 @@ envs = mkSource SNAKE $ \envNames -> do
 opts :: (TraversableB h, ConstraintsB h, AllB FromParam h) => Panfiguration h
 opts = mkSource kebab $ \optNames -> do
     let parsers = btraverseC @FromParam
-            (\(Const k) -> fmap (tag k) $ optional $ mkOption k)
+            (\(Const k) -> fmap (tag k . maybe Missing Present) $ optional $ mkOption k)
             optNames
     O.execParser $ O.info (parsers <**> O.helper) mempty
   where
@@ -124,7 +130,7 @@ opts = mkSource kebab $ \optNames -> do
     mkOption k = O.option (O.eitherReader fromParam) $ O.long k
 
 defaults :: FunctorB h => h Maybe -> Panfiguration h
-defaults def = mkSource AsIs $ const $ pure $ bmap (mkResult "the default") def
+defaults def = mkSource AsIs $ const $ pure $ bmap (mkResult "the default" . maybe Missing Present) def
 
 -- | Provide all the default values by a plain record
 fullDefaults :: (BareB b, FunctorB (b Covered)) => b Bare Identity  -> Panfiguration (b Covered)
@@ -137,9 +143,10 @@ errorLogger :: (String -> IO ()) -> Panfiguration h
 errorLogger f = mempty { errorLoggerFunction = pure f }
 
 resolve :: (String -> IO ()) -> Maybe (String -> IO ()) -> Dict Show a -> Const (NE.NonEmpty String) a -> Result a -> Compose IO Maybe a
-resolve logFunc errorLog Dict (Const key) (Result srcs used r) = Compose $ r <$ case r of
-    Nothing -> fromMaybe logFunc errorLog $ unwords [displayKey key <> ":", "None of", commas srcs, "provides a value"]
-    Just v -> logFunc $ unwords [displayKey key <> ":", "using", show v, "from", commas used]
+resolve logFunc errorLog Dict (Const key) (Result srcs used r) = Compose $ case r of
+    Missing -> (Nothing<$) $ fromMaybe logFunc errorLog $ unwords [displayKey key <> ":", "None of", commas srcs, "provides a value"]
+    Invalid msg -> (Nothing<$) $ fromMaybe logFunc errorLog $ unwords [displayKey key <> ":", "in", commas used <> ":", msg]
+    Present v -> (Just v<$) $ logFunc $ unwords [displayKey key <> ":", "using", show v, "from", commas used]
     where
         displayKey = intercalate "." . NE.toList
         commas [] = ""
