@@ -27,6 +27,7 @@ deriving instance Show ServerArgs
 getServerArgs :: IO ServerArgs
 getServerArgs = run $ mconcat
     [ logger putStrLn
+    , errorLogger (putStrLn . ("[Error] "++))
     , declCase snake
     , opts `asCase` kebab
     , envs
